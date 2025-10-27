@@ -1260,6 +1260,96 @@ function checkOwlGameboyDelivery() {
     }
 }
 
+// Check for owl delivery of wind chimes
+function checkOwlWindChimeDelivery() {
+    // Only try to deliver if wind chimes haven't been delivered yet and we have trees
+    if (windChimeOwlDelivered || trees.length === 0) return;
+
+    // Check if we're past day 15
+    if (dayNightCycleCount >= 15) {
+        // Small chance for an owl to bring wind chimes
+        if (timeOfDay >= 1 && Math.random() < 0.1 && owls.length === 0) {
+            // Create a special owl to deliver wind chimes
+            const side = Math.random() < 0.5 ? 'left' : 'right';
+            const x = side === 'left' ? -30 : canvas.width + 30;
+            const y = canvas.height * 0.3 + Math.random() * 100;
+
+            const owl = new Owl(x, y);
+            owl.isDeliveringChimes = true; // Special property
+            owls.push(owl);
+
+            // Override the owl's update method to make it drop the wind chimes
+            const originalUpdate = owl.update;
+            owl.update = function(deltaTime) {
+                // If in middle of screen, drop the wind chimes
+                if (!windChimeOwlDelivered &&
+                    this.x > canvas.width * 0.4 &&
+                    this.x < canvas.width * 0.6) {
+
+                    // Find a random tree to hang the wind chimes on
+                    const randomTree = trees[Math.floor(Math.random() * trees.length)];
+                    const windChime = createWindChime(randomTree.x, randomTree.y, randomTree.trunkHeight);
+                    windChime.treeId = randomTree.id;
+                    windChimes.push(windChime);
+
+                    windChimeOwlDelivered = true;
+                    windChimeEnabled = true; // Auto-enable
+                    this.isDeliveringChimes = false;
+
+                    // Add diary entry for wind chime delivery
+                    addDiaryEntry("An owl delivered beautiful wind chimes! They now hang from a tree.", 'special');
+
+                    // Play a special sound
+                    if (audioContext) {
+                        const notes = ['E5', 'G5', 'A5', 'C6', 'E6'];
+                        for (let i = 0; i < notes.length; i++) {
+                            setTimeout(() => {
+                                playNote(notes[i], 0.5);
+                            }, i * 200);
+                        }
+                    }
+
+                    debugLog(`Owl delivered wind chimes to tree at (${randomTree.x})`);
+                }
+
+                // Call original update
+                return originalUpdate.call(this, deltaTime);
+            }
+
+            // Override the draw method to show the owl carrying wind chimes
+            const originalDraw = owl.draw;
+            owl.draw = function() {
+                originalDraw.call(this);
+
+                // Draw small package under owl if still delivering
+                if (this.isDeliveringChimes) {
+                    // Draw a small wind chime shape under the owl
+                    ctx.fillStyle = '#DAA520'; // Golden
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y + 22, 6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Draw small tubes
+                    for (let i = 0; i < 3; i++) {
+                        ctx.fillStyle = '#C0C0C0'; // Silver
+                        ctx.fillRect(this.x - 6 + i * 4, this.y + 28, 2, 8);
+                    }
+
+                    // String connecting to owl
+                    ctx.strokeStyle = '#8B4513';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y + 5);
+                    ctx.lineTo(this.x, this.y + 20);
+                    ctx.stroke();
+                }
+            }
+
+            debugLog("Special owl bringing wind chimes has appeared!");
+        }
+    }
+}
+
 // Check for gameboy clicks
 function checkGameboyClicks(x, y) {
     if (!gameboy) return false;
@@ -1300,7 +1390,8 @@ function checkGameboyClicks(x, y) {
 function updateGameboy(deltaTime) {
     // Check for owl delivery
     checkOwlGameboyDelivery();
-    
+    checkOwlWindChimeDelivery(); // Also check for wind chime delivery
+
     // Draw gameboy if it exists
     if (gameboy) {
         drawGameboy();
@@ -1533,6 +1624,8 @@ let rainsCompleted = 0; // Track number of completed rain events (for pond forma
         
         // Wind Chime Sound Effect System
         let windChimeEnabled = false;
+        let windChimes = []; // Array to hold visual wind chime objects
+        let windChimeOwlDelivered = false; // Track if owl has delivered wind chimes
 
         // Clock and Weather Forecast System
         let clockEnabled = false;
@@ -2216,6 +2309,114 @@ function createFlower(x, y) {
                 });
 
                 ctx.globalAlpha = 1;
+            });
+        }
+
+        // Wind Chime Visual System
+        function createWindChime(treeX, treeY, trunkHeight) {
+            // Wind chime hangs from tree branch
+            const windChime = {
+                x: treeX + (Math.random() - 0.5) * 40, // Offset from tree center
+                y: treeY - trunkHeight * 0.7, // Hangs from upper part of tree
+                swingAngle: 0,
+                swingSpeed: 0.02 + Math.random() * 0.02,
+                swingAmplitude: 0.1 + Math.random() * 0.1,
+                tubeCount: 4 + Math.floor(Math.random() * 3), // 4-6 tubes
+                treeId: null, // Will be set to tree reference
+                lastChimeTime: 0,
+                chimeInterval: 3000 + Math.random() * 5000 // Chime every 3-8 seconds when windy
+            };
+
+            return windChime;
+        }
+
+        function updateWindChimes(deltaTime) {
+            windChimes.forEach(chime => {
+                // Swing animation
+                chime.swingAngle += chime.swingSpeed * (deltaTime / 16);
+
+                // Random gentle chiming when wind chimes are enabled
+                if (windChimeEnabled && audioContext) {
+                    const now = Date.now();
+                    if (now - chime.lastChimeTime > chime.chimeInterval) {
+                        // Play a soft chime sound
+                        const chimeNotes = ['C5', 'D5', 'E5', 'G5', 'A5'];
+                        const randomNote = chimeNotes[Math.floor(Math.random() * chimeNotes.length)];
+                        playNote(randomNote, 0.3); // Soft volume
+                        chime.lastChimeTime = now;
+                        chime.chimeInterval = 3000 + Math.random() * 5000; // Reset interval
+                    }
+                }
+            });
+        }
+
+        function drawWindChimes() {
+            windChimes.forEach(chime => {
+                ctx.save();
+
+                // Calculate swing offset
+                const swingOffset = Math.sin(chime.swingAngle) * chime.swingAmplitude * 10;
+
+                // Draw hanging string
+                ctx.strokeStyle = 'rgba(139, 69, 19, 0.6)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(chime.x, chime.y);
+                ctx.lineTo(chime.x + swingOffset, chime.y + 30);
+                ctx.stroke();
+
+                // Draw top circle/ring
+                ctx.fillStyle = 'rgba(184, 134, 11, 0.9)'; // Dark golden
+                ctx.beginPath();
+                ctx.arc(chime.x + swingOffset, chime.y + 30, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(139, 69, 19, 0.8)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Draw chime tubes hanging from ring
+                const tubeSpacing = 12 / chime.tubeCount;
+                for (let i = 0; i < chime.tubeCount; i++) {
+                    const tubeX = chime.x + swingOffset + (i - chime.tubeCount / 2) * 4;
+                    const tubeY = chime.y + 35;
+                    const tubeLength = 15 + i * 3; // Varied lengths
+                    const tubeSway = Math.sin(chime.swingAngle + i * 0.5) * 2;
+
+                    // Draw tube string
+                    ctx.strokeStyle = 'rgba(139, 69, 19, 0.4)';
+                    ctx.lineWidth = 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(chime.x + swingOffset, chime.y + 32);
+                    ctx.lineTo(tubeX + tubeSway, tubeY);
+                    ctx.stroke();
+
+                    // Draw metal tube
+                    const gradient = ctx.createLinearGradient(
+                        tubeX + tubeSway - 1.5,
+                        tubeY,
+                        tubeX + tubeSway + 1.5,
+                        tubeY
+                    );
+                    gradient.addColorStop(0, 'rgba(192, 192, 192, 0.9)');
+                    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.9)');
+                    gradient.addColorStop(1, 'rgba(192, 192, 192, 0.9)');
+
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(tubeX + tubeSway - 1.5, tubeY, 3, tubeLength);
+
+                    // Tube rim
+                    ctx.fillStyle = 'rgba(169, 169, 169, 0.9)';
+                    ctx.fillRect(tubeX + tubeSway - 1.5, tubeY + tubeLength, 3, 1);
+                }
+
+                // Draw center clapper (striker)
+                const clapperSway = Math.sin(chime.swingAngle * 1.5) * 3;
+                ctx.fillStyle = 'rgba(139, 69, 19, 0.8)';
+                ctx.beginPath();
+                ctx.arc(chime.x + swingOffset + clapperSway, chime.y + 50, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
             });
         }
 
@@ -3654,20 +3855,30 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
 
         // Draw ground layer - called AFTER camera transform so it moves with everything else
         function drawGround() {
-            // Calculate ground position relative to canvas
-            // We need to draw a large ground rectangle that extends beyond canvas bounds
-            // to ensure it covers the entire view when camera is panned/zoomed
+            // Calculate ground position in world coordinates
             const groundY = canvas.height * GROUND_HEIGHT_RATIO;
             const groundColor = isRaining ? '#7AC552' : (puddles.length > 0 ? '#88DD77' : '#90EE90');
 
-            // Draw ground extending well beyond visible canvas when zoomed/panned
-            const extendedWidth = canvas.width * 3;
-            const extendedHeight = canvas.height * 2;
-            const offsetX = -canvas.width;
-            const offsetY = groundY;
+            // Calculate the visible world bounds accounting for camera zoom and offset
+            // We need to draw ground that covers the entire visible canvas after transformation
+            const worldVisibleWidth = canvas.width / cameraZoom;
+            const worldVisibleHeight = canvas.height / cameraZoom;
+
+            // Calculate world position of top-left corner of visible area
+            const worldLeft = -cameraOffsetX / cameraZoom;
+            const worldTop = -cameraOffsetY / cameraZoom;
+
+            // Draw ground with generous margins to prevent any gaps
+            const marginX = worldVisibleWidth * 2; // Extra margin on sides
+            const marginY = worldVisibleHeight * 2; // Extra margin below
 
             ctx.fillStyle = groundColor;
-            ctx.fillRect(offsetX, offsetY, extendedWidth, extendedHeight);
+            ctx.fillRect(
+                worldLeft - marginX,
+                groundY,
+                worldVisibleWidth + marginX * 2,
+                worldVisibleHeight + marginY
+            );
         }
 
 
@@ -16500,6 +16711,10 @@ if (mushroomMode) {
         nest.draw();
     }
 
+    // Update and draw wind chimes (hang from trees, drawn after nests)
+    updateWindChimes(deltaTime);
+    drawWindChimes();
+
     // Draw scarecrow (behind moving animals)
 if (mushroomMode) {
     drawMushroomScarecrow();
@@ -17077,7 +17292,21 @@ if (antHill) {
                 debugLog(`Initial birdhouse spawned fully built at ground level (${birdhouseX}, ${birdhouseY})`);
                 addDiaryEntry("A sturdy birdhouse already stands in the garden, waiting for residents.", 'discovery');
             }
-            
+
+            // 10% chance to spawn wind chimes hanging from a tree on initial load
+            if (Math.random() < 0.1 && trees.length > 0) {
+                const randomTree = trees[Math.floor(Math.random() * trees.length)];
+                const windChime = createWindChime(randomTree.x, randomTree.y, randomTree.trunkHeight);
+                windChime.treeId = randomTree.id;
+                windChimes.push(windChime);
+
+                // Auto-enable wind chime audio if spawned
+                windChimeEnabled = true;
+
+                debugLog(`Initial wind chime spawned on tree at (${randomTree.x})`);
+                addDiaryEntry("Gentle wind chimes hang from a tree, waiting to sing in the breeze.", 'discovery');
+            }
+
             // Schedule first rain
             scheduleRain();
             
@@ -17784,7 +18013,17 @@ if (toggleWindChimeBtn) {
     // Start wind chimes
     windChimeStartTime = Date.now();
     lastWindChimeTime = 0; // Set to 0 to trigger immediate chime
-    
+
+    // Add visual wind chime if none exist and we have trees
+    if (windChimes.length === 0 && trees.length > 0) {
+        const randomTree = trees[Math.floor(Math.random() * trees.length)];
+        const windChime = createWindChime(randomTree.x, randomTree.y, randomTree.trunkHeight);
+        windChime.treeId = randomTree.id;
+        windChimes.push(windChime);
+        debugLog(`Wind chime added to tree at (${randomTree.x}) via debug button`);
+        addDiaryEntry("Wind chimes now hang from a tree, ready to sing.", 'discovery');
+    }
+
     // Initialize audio context if needed
     if (!audioContext) {
         try {
