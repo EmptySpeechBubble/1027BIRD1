@@ -6295,6 +6295,22 @@ if (timeOfDay < 1 && Math.random() < 0.001) {
         class Bird {
             constructor(isWild = false, birdTypeOverride = null, startX = null, startY = null) {
         this.birdType = birdTypeOverride || BIRD_TYPES[Math.floor(Math.random() * BIRD_TYPES.length)];
+
+        // Rare color variant system (5% chance for special colors)
+        this.isRareVariant = Math.random() < 0.05;
+        if (this.isRareVariant) {
+            const rareVariants = [
+                { name: 'Albino', bodyColor: '#FFFFFF', wingColor: '#F5F5F5' },
+                { name: 'Melanistic', bodyColor: '#1a1a1a', wingColor: '#0a0a0a' },
+                { name: 'Golden', bodyColor: '#FFD700', wingColor: '#FFA500' },
+                { name: 'Azure', bodyColor: '#007FFF', wingColor: '#0066CC' },
+                { name: 'Rose', bodyColor: '#FF69B4', wingColor: '#FF1493' },
+                { name: 'Emerald', bodyColor: '#50C878', wingColor: '#2E8B57' }
+            ];
+            this.rareVariant = rareVariants[Math.floor(Math.random() * rareVariants.length)];
+            debugLog(`Rare ${this.rareVariant.name} ${this.birdType.name} spawned!`);
+        }
+
         this.x = startX !== null ? startX : Math.random() * canvas.width;
         this.y = startY !== null ? startY : canvas.height * 0.4;
         this.direction = Math.random() < 0.5 ? -1 : 1;
@@ -9557,8 +9573,9 @@ if (this.pathIndex >= this.path.length) {
                 const wingY = isFlapping ? Math.cos(this.wingFlap) * 5 : 0; // Increased from 2 to 3
                 
                 // Draw body
-                 // MODIFY THIS LINE to use mushroom color:
-    ctx.fillStyle = mushroomMode ? getMushroomColor(this.birdType.bodyColor) : this.birdType.bodyColor;
+                 // Use rare variant colors if present, otherwise normal colors
+    const bodyColor = this.isRareVariant ? this.rareVariant.bodyColor : this.birdType.bodyColor;
+    ctx.fillStyle = mushroomMode ? getMushroomColor(bodyColor) : bodyColor;
     ctx.beginPath();
     ctx.ellipse(
         this.x, 
@@ -9582,8 +9599,8 @@ if (this.pathIndex >= this.path.length) {
     );
     ctx.fill();
                 
-               // MODIFY THIS LINE to use mushroom color:
-    ctx.fillStyle = mushroomMode ? getMushroomColor(this.birdType.bodyColor) : this.birdType.bodyColor;
+               // Use same body color for tail
+    ctx.fillStyle = mushroomMode ? getMushroomColor(bodyColor) : bodyColor;
     ctx.beginPath();
     if (this.direction > 0) {
         ctx.moveTo(this.x - 10 * sizeMultiplier, this.y + yOffset);
