@@ -1452,6 +1452,9 @@ let hadAnts = false
 let birdTrails = []; // Will store past positions of birds
 const MAX_TRAIL_LENGTH = 100; // How many past positions to remember
 let mushroomEffectSpeed = 0.03; // Control speed of mushroom mode effects
+
+// Regular mushroom clusters (non-magic) - grow near tree bases after rain
+let mushroomClusters = [];
 let playingTheHits = false; // Flag to disable random chirps during playthehits performance
 let foodMaxedOutTimer = 0; // Track how long food has been at max
 const FOOD_MAX_RAT_ATTRACTION_TIME = 30000; // 30 seconds of max food attracts rats
@@ -2127,13 +2130,101 @@ function createFlower(x, y) {
     }
 }
 
+        // Regular Mushroom Cluster System
+        function spawnMushroomCluster(treeX, treeY) {
+            // Create a small cluster of 3-5 mushrooms near tree base
+            const numMushrooms = 3 + Math.floor(Math.random() * 3);
+            const cluster = {
+                x: treeX + (Math.random() - 0.5) * 60, // Near tree base
+                y: treeY + 5, // Slightly below ground
+                mushrooms: [],
+                age: 0,
+                maxAge: 5 * 60 * 1000 // Lasts for 5 minutes before slowly fading
+            };
+
+            for (let i = 0; i < numMushrooms; i++) {
+                cluster.mushrooms.push({
+                    offsetX: (Math.random() - 0.5) * 30,
+                    offsetY: (Math.random() - 0.5) * 10,
+                    size: 5 + Math.random() * 8,
+                    capHue: 15 + Math.random() * 30, // Brown/orange caps
+                    stemShade: 220 + Math.random() * 20 // Light gray stems
+                });
+            }
+
+            mushroomClusters.push(cluster);
+        }
+
+        function updateMushroomClusters(deltaTime) {
+            // Age clusters and remove old ones
+            mushroomClusters = mushroomClusters.filter(cluster => {
+                cluster.age += deltaTime;
+                return cluster.age < cluster.maxAge;
+            });
+        }
+
+        function drawMushroomClusters() {
+            mushroomClusters.forEach(cluster => {
+                // Calculate fade opacity for old clusters
+                const fadeStart = cluster.maxAge * 0.7;
+                const opacity = cluster.age > fadeStart
+                    ? 1 - ((cluster.age - fadeStart) / (cluster.maxAge - fadeStart))
+                    : 1;
+
+                cluster.mushrooms.forEach(m => {
+                    const x = cluster.x + m.offsetX;
+                    const y = cluster.y + m.offsetY;
+
+                    ctx.globalAlpha = opacity;
+
+                    // Draw stem
+                    ctx.fillStyle = `hsl(0, 0%, ${m.stemShade}%)`;
+                    ctx.fillRect(
+                        x - m.size * 0.15,
+                        y - m.size * 0.4,
+                        m.size * 0.3,
+                        m.size * 0.5
+                    );
+
+                    // Draw cap
+                    ctx.fillStyle = `hsl(${m.capHue}, 50%, 45%)`;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        x,
+                        y - m.size * 0.4,
+                        m.size * 0.5,
+                        m.size * 0.3,
+                        0, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+
+                    // Draw spots on cap
+                    ctx.fillStyle = `rgba(255, 255, 255, 0.5)`;
+                    for (let i = 0; i < 3; i++) {
+                        const spotAngle = i / 3 * Math.PI * 2;
+                        const spotDist = m.size * 0.2;
+                        ctx.beginPath();
+                        ctx.arc(
+                            x + Math.cos(spotAngle) * spotDist * 0.5,
+                            y - m.size * 0.4 + Math.sin(spotAngle) * spotDist * 0.3,
+                            m.size * 0.06,
+                            0, Math.PI * 2
+                        );
+                        ctx.fill();
+                    }
+                });
+
+                ctx.globalAlpha = 1;
+            });
+        }
+
 
         // Rain system
         let raindrops = [];
 
         function scheduleRain() {
-          // Much less frequent rain
-            const nextRainDelay = 480000 + Math.random() * 300000; // 8-13 minutes between rains (doubled from 4-7)
+          // Rain occurs more frequently for lively ecosystem
+            const nextRainDelay = 300000 + Math.random() * 240000; // 5-9 minutes between rains
 
             // Store next rain time for accurate forecast
             window.nextScheduledRainTime = Date.now() + nextRainDelay;
@@ -2227,8 +2318,18 @@ if (isTabVisible) {
     debugLog("Tab not visible, skipping puddle creation");
 }
 
-                                
-                                
+// Spawn mushroom clusters near trees after rain (damp conditions)
+if (trees.length > 0 && Math.random() < 0.4) { // 40% chance per rain
+    const numClusters = 1 + Math.floor(Math.random() * 3); // 1-3 clusters
+    for (let i = 0; i < numClusters; i++) {
+        const tree = trees[Math.floor(Math.random() * trees.length)];
+        spawnMushroomCluster(tree.x, tree.y);
+    }
+    debugLog(`Spawned ${numClusters} mushroom cluster(s) near trees`);
+}
+
+
+
                                 // Keep wasRaining true for longer (1 minute)
                                 const rainMemoryTimer = setTimeout(() => {
                                     wasRaining = false;
@@ -2908,12 +3009,27 @@ document.addEventListener('visibilitychange', function() {
             scarecrow.y = canvas.height * GROUND_HEIGHT_RATIO;
         }
                 
-                // Update all ground-based entities
-                trees.forEach(tree => {
-                    tree.x *= scaleX;
-                    // Keep trees properly grounded at the new ground level, preserving depth offset
-                    tree.y = newGroundLevel + (tree.depthOffset || 0);
-                });
+                // Redistribute trees evenly across new canvas width
+                if (trees.length > 0) {
+                    // Sort trees by current X position to maintain relative order
+                    trees.sort((a, b) => a.x - b.x);
+
+                    // Calculate even spacing with margins on edges
+                    const margin = 100;
+                    const availableWidth = canvas.width - (margin * 2);
+                    const spacing = availableWidth / (trees.length > 1 ? trees.length - 1 : 1);
+
+                    // Redistribute trees evenly
+                    trees.forEach((tree, index) => {
+                        if (trees.length === 1) {
+                            tree.x = canvas.width / 2;
+                        } else {
+                            tree.x = margin + (spacing * index);
+                        }
+                        // Keep trees properly grounded at the new ground level, preserving depth offset
+                        tree.y = newGroundLevel + (tree.depthOffset || 0);
+                    });
+                }
                 
                 // Update other ground-based entities
                 worms.forEach(worm => {
@@ -3373,119 +3489,86 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
         }
 
         // Background drawing
-        function drawBackground() {
+        // Split into two functions: drawSky (fixed) and drawGround (moves with camera)
+        function drawSky() {
             let skyColor;
 
-// // Add sunset variation
-const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6; // Changed from 4 to 6 types
-    
-    if (timeOfDay < 1) {
-        // Day colors with sunset variations
-        const sunsetTime = timeOfDay > 0.6 && timeOfDay < 0.98; // Extended sunset period
-        
-        if (sunsetTime) {
-            const sunsetIntensity = Math.min(1, (timeOfDay - 0.6) * 3);
-            
-            switch(sunsetType) {
-                case 0:
-                    // Golden sunset
-                    skyColor = `hsl(${40 + timeOfDay * 5}, ${85 * sunsetIntensity}%, ${75 - timeOfDay * 15}%)`;
-                    break;
-                case 1:
-                    // Mexican-style orange sunset (enhanced)
-                    skyColor = `hsl(${25 + timeOfDay * 10}, ${95 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
-                    break;
-                case 2:
-                    // Pink/purple sunset
-                    skyColor = `hsl(${320 + timeOfDay * 10}, ${80 * sunsetIntensity}%, ${70 - timeOfDay * 25}%)`;
-                    break;
-                case 3:
-                    // Dramatic red sunset
-                    skyColor = `hsl(${5 + timeOfDay * 5}, ${90 * sunsetIntensity}%, ${60 - timeOfDay * 30}%)`;
-                    break;
-                case 4:
-                    // Teal/green sunset
-                    skyColor = `hsl(${180 + timeOfDay * 8}, ${70 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
-                    break;
-                case 5:
-                    // Blue/purple gradient sunset
-                    skyColor = `hsl(${240 + timeOfDay * 15}, ${80 * sunsetIntensity}%, ${65 - timeOfDay * 25}%)`;
-                    break;
-            }
-        } else {
-            // Regular blue day sky
-            skyColor = `hsl(${200 + timeOfDay * 60}, 70%, ${70 - timeOfDay * 30}%)`; 
-        }
-    } else {
-        // Night sky (unchanged)
-        skyColor = `hsl(${260 - (timeOfDay - 1) * 60}, 70%, ${40 - (timeOfDay - 1) * 20}%)`; 
-    
-        // Night sky (unchanged)
-        skyColor = `hsl(${260 - (timeOfDay - 1) * 60}, 70%, ${40 - (timeOfDay - 1) * 20}%)`; 
-    }
-
-    ctx.fillStyle = skyColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height * GROUND_HEIGHT_RATIO);
-
-
-    
+            // Add sunset variation
+            const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6;
 
             if (timeOfDay < 1) {
-                skyColor = `hsl(${200 + timeOfDay * 60}, 70%, ${70 - timeOfDay * 30}%)`; // Day
+                // Day colors with sunset variations
+                const sunsetTime = timeOfDay > 0.6 && timeOfDay < 0.98;
+
+                if (sunsetTime) {
+                    const sunsetIntensity = Math.min(1, (timeOfDay - 0.6) * 3);
+
+                    switch(sunsetType) {
+                        case 0:
+                            skyColor = `hsl(${40 + timeOfDay * 5}, ${85 * sunsetIntensity}%, ${75 - timeOfDay * 15}%)`;
+                            break;
+                        case 1:
+                            skyColor = `hsl(${25 + timeOfDay * 10}, ${95 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
+                            break;
+                        case 2:
+                            skyColor = `hsl(${320 + timeOfDay * 10}, ${80 * sunsetIntensity}%, ${70 - timeOfDay * 25}%)`;
+                            break;
+                        case 3:
+                            skyColor = `hsl(${5 + timeOfDay * 5}, ${90 * sunsetIntensity}%, ${60 - timeOfDay * 30}%)`;
+                            break;
+                        case 4:
+                            skyColor = `hsl(${180 + timeOfDay * 8}, ${70 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
+                            break;
+                        case 5:
+                            skyColor = `hsl(${240 + timeOfDay * 15}, ${80 * sunsetIntensity}%, ${65 - timeOfDay * 25}%)`;
+                            break;
+                    }
+                } else {
+                    skyColor = `hsl(${200 + timeOfDay * 60}, 70%, ${70 - timeOfDay * 30}%)`;
+                }
             } else {
-                skyColor = `hsl(${260 - (timeOfDay - 1) * 60}, 70%, ${40 - (timeOfDay - 1) * 20}%)`; // Night
+                skyColor = `hsl(${260 - (timeOfDay - 1) * 60}, 70%, ${40 - (timeOfDay - 1) * 20}%)`;
             }
 
             ctx.fillStyle = skyColor;
             ctx.fillRect(0, 0, canvas.width, canvas.height * GROUND_HEIGHT_RATIO);
 
+            // Mushroom mode sky effects
+            if (mushroomMode) {
+                const currentTime = Date.now();
+                if (currentTime - lastColorCycleUpdate > 100) {
+                    lastColorCycleUpdate = currentTime;
 
-            // ADD THIS CODE RIGHT HERE after the sky is drawn:
-    if (mushroomMode) {
-        // Draw psychedelic sky patterns
-        const currentTime = Date.now();
-        if (currentTime - lastColorCycleUpdate > 100) { // Update every 100ms
-            lastColorCycleUpdate = currentTime;
-            
-            // Draw rainbow gradient overlay with transparency
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            
-            // Add color stops based on time
-            const time = currentTime / 1000;
-            for (let i = 0; i < 6; i++) {
-                const hue = (time * 20 + i * 60) % 360;
-                gradient.addColorStop(i / 5, `hsla(${hue}, 100%, 70%, 0.1)`);
-            }
-            
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height * GROUND_HEIGHT_RATIO);
-            
-            // Add some floating circles
-            for (let i = 0; i < 3; i++) {
-                const circleX = (canvas.width / 3) * (i + 1) + Math.sin(time + i) * 100;
-                const circleY = canvas.height * 0.3 + Math.cos(time * 0.7 + i) * 50;
-                const radius = 30 + Math.sin(time * 0.5 + i * 2) * 15;
-                
-                const circleGradient = ctx.createRadialGradient(
-                    circleX, circleY, 0,
-                    circleX, circleY, radius
-                );
-                
-                circleGradient.addColorStop(0, `hsla(${(time * 30 + i * 120) % 360}, 100%, 70%, 0.2)`);
-                circleGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-                
-                ctx.fillStyle = circleGradient;
-                ctx.beginPath();
-                ctx.arc(circleX, circleY, radius, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-    }
+                    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+                    const time = currentTime / 1000;
+                    for (let i = 0; i < 6; i++) {
+                        const hue = (time * 20 + i * 60) % 360;
+                        gradient.addColorStop(i / 5, `hsla(${hue}, 100%, 70%, 0.1)`);
+                    }
 
-    // Ground
-    const groundColor = isRaining ? '#7AC552' : (puddles.length > 0 ? '#88DD77' : '#90EE90');
-    ctx.fillStyle = groundColor;
-    ctx.fillRect(0, canvas.height * GROUND_HEIGHT_RATIO, canvas.width, canvas.height * (1 - GROUND_HEIGHT_RATIO));
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height * GROUND_HEIGHT_RATIO);
+
+                    for (let i = 0; i < 3; i++) {
+                        const circleX = (canvas.width / 3) * (i + 1) + Math.sin(time + i) * 100;
+                        const circleY = canvas.height * 0.3 + Math.cos(time * 0.7 + i) * 50;
+                        const radius = 30 + Math.sin(time * 0.5 + i * 2) * 15;
+
+                        const circleGradient = ctx.createRadialGradient(
+                            circleX, circleY, 0,
+                            circleX, circleY, radius
+                        );
+
+                        circleGradient.addColorStop(0, `hsla(${(time * 30 + i * 120) % 360}, 100%, 70%, 0.2)`);
+                        circleGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                        ctx.fillStyle = circleGradient;
+                        ctx.beginPath();
+                        ctx.arc(circleX, circleY, radius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
 
             
             // Draw stars at night
@@ -3567,7 +3650,25 @@ const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6; // Ch
                 }
             }
         }
-        
+
+        // Draw ground layer - called AFTER camera transform so it moves with everything else
+        function drawGround() {
+            // Calculate ground position relative to canvas
+            // We need to draw a large ground rectangle that extends beyond canvas bounds
+            // to ensure it covers the entire view when camera is panned/zoomed
+            const groundY = canvas.height * GROUND_HEIGHT_RATIO;
+            const groundColor = isRaining ? '#7AC552' : (puddles.length > 0 ? '#88DD77' : '#90EE90');
+
+            // Draw ground extending well beyond visible canvas when zoomed/panned
+            const extendedWidth = canvas.width * 3;
+            const extendedHeight = canvas.height * 2;
+            const offsetX = -canvas.width;
+            const offsetY = groundY;
+
+            ctx.fillStyle = groundColor;
+            ctx.fillRect(offsetX, offsetY, extendedWidth, extendedHeight);
+        }
+
 
         // Modified drawCurtains to do nothing
         function drawCurtains() {
@@ -3708,7 +3809,16 @@ const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6; // Ch
                         const baseName = getAnimalName(lockedAnimal, lockedAnimalType);
                         const labelText = `${baseName} is ${entityAction}`;
                         const labelX = lockedAnimal.x;
-                        const labelY = lockedAnimal.y - 45;
+
+                        // For trees, position label at top of crown; for animals, position above them
+                        let labelY;
+                        if (lockedAnimalType === 'tree') {
+                            // Position at top of tree's crown (account for trunk height and leaf radius)
+                            labelY = lockedAnimal.y - lockedAnimal.trunkHeight - lockedAnimal.leafRadius - 20;
+                        } else {
+                            // For animals, position above them
+                            labelY = lockedAnimal.y - 45;
+                        }
 
                         ctx.font = 'bold 16px Arial';
                         const textMetrics = ctx.measureText(labelText);
@@ -3729,26 +3839,37 @@ const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6; // Ch
                         ctx.textBaseline = 'middle';
                         ctx.fillText(labelText, labelX, labelY);
 
-                        // Draw bright highlight around locked animal
+                        // Draw bright highlight around locked animal (centered on entity)
+                        let highlightY, highlightRadius;
+                        if (lockedAnimalType === 'tree') {
+                            // Center highlight on tree's crown
+                            highlightY = lockedAnimal.y - lockedAnimal.trunkHeight;
+                            highlightRadius = lockedAnimal.leafRadius + 10;
+                        } else {
+                            highlightY = lockedAnimal.y;
+                            highlightRadius = 30;
+                        }
+
                         ctx.strokeStyle = `rgba(100, 150, 255, ${0.8 * fadeOpacity})`;
                         ctx.lineWidth = 3;
                         ctx.beginPath();
-                        ctx.arc(lockedAnimal.x, lockedAnimal.y, 30, 0, Math.PI * 2);
+                        ctx.arc(lockedAnimal.x, highlightY, highlightRadius, 0, Math.PI * 2);
                         ctx.stroke();
 
                         // Pulsing effect
-                        const pulseSize = 30 + Math.sin(Date.now() / 200) * 5;
+                        const pulseSize = highlightRadius + Math.sin(Date.now() / 200) * 5;
                         ctx.strokeStyle = `rgba(100, 150, 255, ${0.3 * fadeOpacity})`;
                         ctx.lineWidth = 1;
                         ctx.beginPath();
-                        ctx.arc(lockedAnimal.x, lockedAnimal.y, pulseSize, 0, Math.PI * 2);
+                        ctx.arc(lockedAnimal.x, highlightY, pulseSize, 0, Math.PI * 2);
                         ctx.stroke();
 
                     // Draw health/hunger bars and current action
                     const barWidth = 100;
                     const barHeight = 8;
                     const barX = lockedAnimal.x - barWidth / 2;
-                    let barY = lockedAnimal.y - 65; // Above the name label
+                    // Position bars above the name label
+                    let barY = labelY - 20;
 
                     // Get entity stats
                     let health = 100;
@@ -3795,12 +3916,7 @@ const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6; // Ch
                         currentAction = lockedAnimal.state === 'returningWithFood' ? "Carrying Food" : "Exploring";
                     }
 
-                        // Draw current action text
-                        ctx.font = '12px Arial';
-                        ctx.fillStyle = `rgba(255, 255, 255, ${0.9 * fadeOpacity})`;
-                        ctx.textAlign = 'center';
-                        ctx.fillText(currentAction, lockedAnimal.x, barY - 5);
-                        barY -= 15;
+                        // Action is already shown in name label above, no need to show it here
 
                         // Draw health bar
                         ctx.fillStyle = `rgba(0, 0, 0, ${0.6 * fadeOpacity})`;
@@ -9995,10 +10111,24 @@ class Squirrel {
                         debugLog(`Squirrel damaged nest at (${nearbyNest.x}, ${nearbyNest.y})`);
                     }
                 }
-                
+
+                // Random chance to knock a branch loose (becomes a twig on the ground)
+                if (Math.random() < 0.0008) { // Small random chance per frame
+                    const branchX = this.climbingTree.x + (Math.random() - 0.5) * 30;
+                    const branchY = this.groundY - 5;
+                    twigs.push({
+                        x: branchX,
+                        y: branchY,
+                        collected: false,
+                        size: 15 + Math.random() * 10,
+                        angle: Math.random() * Math.PI * 2
+                    });
+                    debugLog(`Squirrel knocked a branch loose at (${branchX}, ${branchY})`);
+                }
+
                 // Birds sometimes chase squirrels from trees
-                const birdInTree = birds.find(bird => 
-                    bird.perchTarget && 
+                const birdInTree = birds.find(bird =>
+                    bird.perchTarget &&
                     bird.perchTarget.tree === this.climbingTree &&
                     distance(this.x, this.y, bird.x, bird.y) < 30
                 );
@@ -16241,12 +16371,15 @@ if (mushroomMode) {
 
     // ===== BACKGROUND LAYER =====
     // Draw the sky background with day/night changes (unaffected by camera)
-    drawBackground();
+    drawSky();
 
     // Save context and apply camera transformations
     ctx.save();
     ctx.translate(cameraOffsetX, cameraOffsetY);
     ctx.scale(cameraZoom, cameraZoom);
+
+    // Draw ground layer (moves with camera to prevent floating effect)
+    drawGround();
 
     // Draw rainbow if visible (behind most elements)
     if (rainbowVisible) {
@@ -16278,6 +16411,8 @@ if (mushroomMode) {
     drawTwigs();
     drawFlowers();
     drawMagicMushroom();
+    updateMushroomClusters(deltaTime);
+    drawMushroomClusters();
     drawFood(deltaTime);
     drawBirdPoops(deltaTime);
     drawWorms();
@@ -16856,18 +16991,18 @@ if (antHill) {
                 debugLog(`Initial pond spawned at (${pondX}, ${pondY}) with koi and frog`);
             }
 
-            // 10% chance to spawn a fully built birdhouse on initial load
-            if (Math.random() < 0.1 && trees.length > 0) {
-                const randomTree = trees[Math.floor(Math.random() * trees.length)];
-                const birdhouseX = randomTree.x;
-                const birdhouseY = randomTree.y - randomTree.trunkHeight - 60;
+            // 10% chance to spawn a fully built birdhouse on initial load at ground level
+            if (Math.random() < 0.1) {
+                // Spawn at random X position on ground level
+                const birdhouseX = 100 + Math.random() * (canvas.width - 200);
+                const birdhouseY = canvas.height * GROUND_HEIGHT_RATIO - 20; // Ground level
 
                 const birdhouse = new Birdhouse(birdhouseX, birdhouseY);
                 birdhouse.materialsCollected = BIRDHOUSE_MATERIALS_NEEDED; // Fully built
                 birdhouse.isComplete = true; // Mark as complete
                 birdhouses.push(birdhouse);
 
-                debugLog(`Initial birdhouse spawned fully built at (${birdhouseX}, ${birdhouseY})`);
+                debugLog(`Initial birdhouse spawned fully built at ground level (${birdhouseX}, ${birdhouseY})`);
                 addDiaryEntry("A sturdy birdhouse already stands in the garden, waiting for residents.", 'discovery');
             }
             
