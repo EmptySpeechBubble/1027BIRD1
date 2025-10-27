@@ -1464,6 +1464,7 @@ let rainbowVisible = false;
 let rainbowOpacity = 0;
 let rainbowTimer = 0;
 let rainbowDuration = dayNightDuration; // Rainbow lasts for a full day/night cycle instead of 60000ms
+let isDoubleRainbow = false; // 1% chance for double rainbow
 
 // Scarecrow variables
 let scarecrow = null;
@@ -3987,6 +3988,8 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                 this.ratOccupied = false; // Track if a rat has taken over
                 this.readyForBabies = false; // Explicit flag for baby creation
                 this.lastBabyTime = 0; // Track when the last baby was born
+                this.lastOccupiedTime = Date.now(); // Track when nest was last occupied
+                this.abandonedDegradationMultiplier = 1.0; // Multiplier for abandoned nests
 
 
 
@@ -4080,17 +4083,32 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                     deteriorationAmount *= 1.5; // Harsh winter weather
                 }
                 
-                // Occupied nests deteriorate more slowly
+                // Track occupancy and adjust degradation for abandoned nests
                 if (this.occupiedBy) {
                     deteriorationAmount *= 0.5; // Halve deterioration if occupied
-                    
+                    this.lastOccupiedTime = Date.now(); // Update last occupied time
+                    this.abandonedDegradationMultiplier = 1.0; // Reset multiplier
+
                     // Occasional minor repairs when occupied
                     if (Math.random() < 0.01 * (deltaTime / 1000)) {
                         this.condition = Math.min(100, this.condition + 1);
                         debugLog(`Bird made minor repairs to nest at (${this.x}, ${this.y})`);
                     }
+                } else {
+                    // Check how long nest has been abandoned
+                    const timeSinceOccupied = Date.now() - this.lastOccupiedTime;
+                    const daysAbandoned = timeSinceOccupied / (dayNightDuration * 0.5); // Game days
+
+                    // Increase degradation multiplier for long-abandoned nests
+                    if (daysAbandoned > 1) {
+                        // After 1 day: 2x degradation
+                        // After 2 days: 3x degradation
+                        // After 3+ days: 4x degradation
+                        this.abandonedDegradationMultiplier = Math.min(4, 1 + daysAbandoned);
+                        deteriorationAmount *= this.abandonedDegradationMultiplier;
+                    }
                 }
-                
+
                 // Reduce condition
                 this.condition = Math.max(0, this.condition - deteriorationAmount);
                 
@@ -13113,8 +13131,16 @@ function createRainbow() {
      // ADD THIS LINE:
      hadRainbow = true;
 
+     // 1% chance for double rainbow!
+     isDoubleRainbow = Math.random() < 0.01;
+
      // Add diary entry
-     addDiaryEntry("A beautiful rainbow arcs across the sky!", 'special');
+     if (isDoubleRainbow) {
+         addDiaryEntry("A rare double rainbow appears! What does it mean?!", 'special');
+         debugLog("DOUBLE RAINBOW created!");
+     } else {
+         addDiaryEntry("A beautiful rainbow arcs across the sky!", 'special');
+     }
     
     // Play a magical sound if wind chimes are enabled
     if (windChimeEnabled && audioContext) {
@@ -13155,6 +13181,7 @@ function updateRainbow(deltaTime) {
     // End rainbow
     else {
         rainbowVisible = false;
+        isDoubleRainbow = false; // Reset for next rainbow
         
         // Return butterflies to normal behavior
         for (const butterfly of butterflies) {
@@ -13198,21 +13225,56 @@ function drawRainbow() {
     // Draw each color band
     for (let i = 0; i < rainbowColors.length; i++) {
         const radius = rainbowWidth / 2 - i * arcWidth;
-        
+
         ctx.beginPath();
         ctx.strokeStyle = rainbowColors[i];
         ctx.lineWidth = arcWidth - 1; // Slight gap between colors
-        
+
         // Draw arc centered on screen
         ctx.arc(
-            canvasCenter, 
-            startY + rainbowHeight, 
-            radius, 
-            Math.PI, 
+            canvasCenter,
+            startY + rainbowHeight,
+            radius,
+            Math.PI,
             Math.PI * 2
         );
-        
+
         ctx.stroke();
+    }
+
+    // Draw second rainbow if this is a double rainbow
+    if (isDoubleRainbow) {
+        const secondRainbowOffset = 100; // Distance above first rainbow
+        const secondRainbowOpacity = rainbowOpacity * 0.5; // Fainter than first
+
+        // Reverse the colors for the second rainbow (real double rainbows have reversed order)
+        const reversedColors = [
+            `rgba(148, 0, 211, ${secondRainbowOpacity * 0.7 * pulseAmount})`,   // Violet
+            `rgba(75, 0, 130, ${secondRainbowOpacity * 0.7 * pulseAmount})`,    // Indigo
+            `rgba(0, 0, 255, ${secondRainbowOpacity * 0.7 * pulseAmount})`,     // Blue
+            `rgba(0, 255, 0, ${secondRainbowOpacity * 0.7 * pulseAmount})`,     // Green
+            `rgba(255, 255, 0, ${secondRainbowOpacity * 0.7 * pulseAmount})`,   // Yellow
+            `rgba(255, 127, 0, ${secondRainbowOpacity * 0.7 * pulseAmount})`,   // Orange
+            `rgba(255, 0, 0, ${secondRainbowOpacity * 0.7 * pulseAmount})`      // Red
+        ];
+
+        for (let i = 0; i < reversedColors.length; i++) {
+            const radius = (rainbowWidth / 2 + secondRainbowOffset) - i * arcWidth;
+
+            ctx.beginPath();
+            ctx.strokeStyle = reversedColors[i];
+            ctx.lineWidth = arcWidth - 1;
+
+            ctx.arc(
+                canvasCenter,
+                startY + rainbowHeight,
+                radius,
+                Math.PI,
+                Math.PI * 2
+            );
+
+            ctx.stroke();
+        }
     }
     
     if (rainbowOpacity > 0.5 && Math.random() < 0.05) { // Reduced from 0.3 to 0.05 - much slower shimmer
@@ -16423,8 +16485,18 @@ if (mushroomMode) {
         birdhouse.draw();
     }
 
-    // Draw nests (they should be on trees but behind birds)
-    for (const nest of nests) {
+    // Update and draw nests (they should be on trees but behind birds)
+    for (let i = nests.length - 1; i >= 0; i--) {
+        const nest = nests[i];
+        nest.update(deltaTime);
+
+        // Remove completely degraded nests (condition 0 and very few materials)
+        if (nest.condition <= 0 && nest.materialsCollected < 3) {
+            debugLog(`Fully degraded nest removed at (${nest.x}, ${nest.y})`);
+            nests.splice(i, 1);
+            continue;
+        }
+
         nest.draw();
     }
 
