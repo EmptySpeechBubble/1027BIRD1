@@ -1554,6 +1554,12 @@ let foodCaches = []; // {x, y, type: 'nut'|'seed', ownerId, createdTime, expires
 let fireflies = []; // {x, y, vx, vy, glowPhase, glowIntensity, caught}
 let fireflyNightActive = false; // Whether fireflies should appear this night
 
+// UFO encounter system
+let ufo = null; // {x, y, vx, vy, state, target, beamProgress, returnTime}
+let ufoEncounterCooldown = 0; // Prevent UFO from appearing too frequently
+const UFO_COOLDOWN_DURATION = 3 * 60000; // 3 minutes between possible encounters
+let beamedUpEntities = []; // Track entities that were beamed up and returned glowing
+
 let playingTheHits = false; // Flag to disable random chirps during playthehits performance
 let foodMaxedOutTimer = 0; // Track how long food has been at max
 const FOOD_MAX_RAT_ATTRACTION_TIME = 30000; // 30 seconds of max food attracts rats
@@ -2595,6 +2601,295 @@ function createFlower(x, y) {
             });
         }
 
+        // UFO Encounter System
+        function attemptUFOSpawn() {
+            // Only spawn at night
+            if (timeOfDay < 1) return;
+
+            // Check if UFO already exists or on cooldown
+            if (ufo || Date.now() < ufoEncounterCooldown) return;
+
+            // Very rare spawn chance (0.5% per check during night)
+            if (Math.random() > 0.005) return;
+
+            // Find potential targets
+            const potentialTargets = [];
+
+            // Check for birdhouses
+            birdhouses.forEach(house => {
+                if (house.isComplete) {
+                    potentialTargets.push({type: 'birdhouse', entity: house});
+                }
+            });
+
+            // Check for scarecrow
+            if (scarecrow) {
+                potentialTargets.push({type: 'scarecrow', entity: scarecrow});
+            }
+
+            // Check for ants (need at least 3)
+            if (ants.length >= 3) {
+                potentialTargets.push({type: 'ant', entity: null}); // Will select random ant later
+            }
+
+            // Need at least one target
+            if (potentialTargets.length === 0) return;
+
+            // Select random target
+            const target = potentialTargets[Math.floor(Math.random() * potentialTargets.length)];
+
+            // If target is ant, select a random ant
+            if (target.type === 'ant') {
+                target.entity = ants[Math.floor(Math.random() * ants.length)];
+            }
+
+            // Create UFO
+            ufo = {
+                x: Math.random() * canvas.width,
+                y: -100, // Start above screen
+                vx: 0,
+                vy: 1.5, // Descend speed
+                state: 'approaching', // approaching, beaming, leaving
+                target: target,
+                beamProgress: 0,
+                beamWidth: 0,
+                rotation: 0,
+                glowPhase: 0,
+                hoverOffset: 0
+            };
+
+            debugLog(`UFO encounter! Target: ${target.type}`);
+        }
+
+        function updateUFO(deltaTime) {
+            if (!ufo) return;
+
+            const dt = deltaTime / 16;
+
+            // Update animation
+            ufo.glowPhase += 0.05 * dt;
+            ufo.rotation += 0.02 * dt;
+            ufo.hoverOffset = Math.sin(ufo.glowPhase) * 5;
+
+            switch(ufo.state) {
+                case 'approaching':
+                    // Move down to hover position
+                    ufo.y += ufo.vy * dt;
+
+                    // Get target position
+                    let targetX = ufo.target.entity.x;
+                    let targetY = 200; // Hover height
+
+                    // Move toward target X
+                    const dx = targetX - ufo.x;
+                    ufo.x += Math.sign(dx) * Math.min(Math.abs(dx), 2 * dt);
+
+                    // Once in position, start beaming
+                    if (Math.abs(dx) < 20 && ufo.y >= targetY) {
+                        ufo.state = 'beaming';
+                        ufo.y = targetY;
+                        ufo.beamProgress = 0;
+                        debugLog(`UFO beaming up ${ufo.target.type}`);
+                    }
+                    break;
+
+                case 'beaming':
+                    // Expand beam
+                    ufo.beamProgress += 0.015 * dt;
+                    ufo.beamWidth = Math.min(80, ufo.beamProgress * 100);
+
+                    // When beam complete, beam up target
+                    if (ufo.beamProgress >= 1) {
+                        beamUpTarget();
+                        ufo.state = 'leaving';
+                    }
+                    break;
+
+                case 'leaving':
+                    // Ascend and leave
+                    ufo.y -= 2 * dt;
+                    ufo.beamWidth = Math.max(0, ufo.beamWidth - 3 * dt);
+
+                    // Remove UFO when off screen
+                    if (ufo.y < -150) {
+                        ufo = null;
+                        ufoEncounterCooldown = Date.now() + UFO_COOLDOWN_DURATION;
+                    }
+                    break;
+            }
+        }
+
+        function beamUpTarget() {
+            if (!ufo || !ufo.target) return;
+
+            const target = ufo.target;
+            const returnTime = Date.now() + 10000 + Math.random() * 10000; // Return in 10-20 seconds
+
+            switch(target.type) {
+                case 'birdhouse':
+                    // Store birdhouse info for return
+                    beamedUpEntities.push({
+                        type: 'birdhouse',
+                        entity: target.entity,
+                        returnTime: returnTime,
+                        originalX: target.entity.x,
+                        originalY: target.entity.y
+                    });
+                    // Hide birdhouse temporarily
+                    target.entity.beamedUp = true;
+                    debugLog('Birdhouse beamed up by UFO!');
+                    break;
+
+                case 'scarecrow':
+                    beamedUpEntities.push({
+                        type: 'scarecrow',
+                        entity: target.entity,
+                        returnTime: returnTime,
+                        originalX: target.entity.x,
+                        originalY: target.entity.y
+                    });
+                    target.entity.beamedUp = true;
+                    debugLog('Scarecrow beamed up by UFO!');
+                    break;
+
+                case 'ant':
+                    // Make ant giant and glowing
+                    target.entity.isGiant = true;
+                    target.entity.giantUntil = Date.now() + (3 * dayNightDuration); // Giant for 3 days
+                    target.entity.glowing = true; // Permanently glowing
+                    target.entity.glowPhase = Math.random() * Math.PI * 2;
+                    target.entity.size = 8; // Make it much larger
+                    debugLog('Ant transformed into giant glowing ant by UFO!');
+                    break;
+            }
+        }
+
+        function updateBeamedEntities() {
+            const now = Date.now();
+
+            for (let i = beamedUpEntities.length - 1; i >= 0; i--) {
+                const beamed = beamedUpEntities[i];
+
+                // Check if it's time to return
+                if (now >= beamed.returnTime) {
+                    // Return entity with green glow
+                    beamed.entity.beamedUp = false;
+                    beamed.entity.glowing = true;
+                    beamed.entity.glowPhase = Math.random() * Math.PI * 2;
+
+                    debugLog(`${beamed.type} returned by UFO with green glow!`);
+
+                    // Remove from beamed list
+                    beamedUpEntities.splice(i, 1);
+                }
+            }
+        }
+
+        function drawUFO() {
+            if (!ufo) return;
+
+            ctx.save();
+            ctx.translate(ufo.x, ufo.y + ufo.hoverOffset);
+            ctx.rotate(ufo.rotation);
+
+            // Draw beam if beaming
+            if (ufo.state === 'beaming' || (ufo.state === 'leaving' && ufo.beamWidth > 0)) {
+                ctx.save();
+                ctx.rotate(-ufo.rotation); // Counter-rotate beam
+
+                // Beam gradient
+                const beamGradient = ctx.createLinearGradient(0, 0, 0, 400);
+                beamGradient.addColorStop(0, `rgba(150, 255, 150, ${0.3 * ufo.beamProgress})`);
+                beamGradient.addColorStop(0.5, `rgba(100, 255, 100, ${0.2 * ufo.beamProgress})`);
+                beamGradient.addColorStop(1, `rgba(150, 255, 150, ${0.1 * ufo.beamProgress})`);
+
+                ctx.fillStyle = beamGradient;
+                ctx.beginPath();
+                ctx.moveTo(-ufo.beamWidth / 2, 0);
+                ctx.lineTo(-ufo.beamWidth * 1.5, 400);
+                ctx.lineTo(ufo.beamWidth * 1.5, 400);
+                ctx.lineTo(ufo.beamWidth / 2, 0);
+                ctx.closePath();
+                ctx.fill();
+
+                // Beam particles
+                for (let i = 0; i < 10; i++) {
+                    const particleY = (Date.now() / 20 + i * 40) % 400;
+                    const particleX = (Math.sin(Date.now() / 200 + i) * ufo.beamWidth);
+                    ctx.fillStyle = `rgba(200, 255, 200, ${0.6 * ufo.beamProgress})`;
+                    ctx.beginPath();
+                    ctx.arc(particleX, particleY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            // UFO body - classic flying saucer
+            const glowIntensity = (Math.sin(ufo.glowPhase) + 1) / 2;
+
+            // Outer glow
+            const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+            glowGradient.addColorStop(0, `rgba(100, 200, 255, ${0.3 * glowIntensity})`);
+            glowGradient.addColorStop(1, 'rgba(100, 200, 255, 0)');
+            ctx.fillStyle = glowGradient;
+            ctx.beginPath();
+            ctx.arc(0, 0, 50, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Top dome
+            ctx.fillStyle = 'rgba(150, 180, 200, 0.8)';
+            ctx.beginPath();
+            ctx.ellipse(0, -5, 15, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Dome highlight
+            ctx.fillStyle = 'rgba(200, 220, 255, 0.6)';
+            ctx.beginPath();
+            ctx.ellipse(-3, -8, 5, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Main saucer body
+            ctx.fillStyle = 'rgba(180, 180, 200, 0.9)';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 35, 12, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Saucer rim
+            ctx.fillStyle = 'rgba(120, 120, 150, 0.9)';
+            ctx.beginPath();
+            ctx.ellipse(0, 3, 35, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Lights around rim
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2 + ufo.glowPhase;
+                const lightX = Math.cos(angle) * 30;
+                const lightY = Math.sin(angle) * 8 + 3;
+
+                const lightColor = (i + Math.floor(ufo.glowPhase * 2)) % 3;
+                let color;
+                if (lightColor === 0) color = 'rgba(255, 100, 100, 0.9)';
+                else if (lightColor === 1) color = 'rgba(100, 255, 100, 0.9)';
+                else color = 'rgba(100, 100, 255, 0.9)';
+
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(lightX, lightY, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Light glow
+                const lightGlow = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, 8);
+                lightGlow.addColorStop(0, color.replace('0.9', '0.4'));
+                lightGlow.addColorStop(1, color.replace('0.9', '0'));
+                ctx.fillStyle = lightGlow;
+                ctx.beginPath();
+                ctx.arc(lightX, lightY, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
 
         // Rain system
         let raindrops = [];
@@ -4874,8 +5169,31 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
             }
             
             draw() {
+                // Don't draw if beamed up by UFO
+                if (this.beamedUp) return;
+
                 // Fixed drawing order to ensure all parts are visible
-                
+
+                // Draw glow effect if glowing (returned by UFO)
+                if (this.glowing) {
+                    if (!this.glowPhase) this.glowPhase = 0;
+                    this.glowPhase += 0.02;
+                    const glowIntensity = (Math.sin(this.glowPhase) + 1) / 2;
+
+                    ctx.save();
+                    const glowGradient = ctx.createRadialGradient(
+                        this.x, this.y - this.poleHeight / 2, 0,
+                        this.x, this.y - this.poleHeight / 2, 60
+                    );
+                    glowGradient.addColorStop(0, `rgba(100, 255, 100, ${0.4 * glowIntensity})`);
+                    glowGradient.addColorStop(1, 'rgba(100, 255, 100, 0)');
+                    ctx.fillStyle = glowGradient;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y - this.poleHeight / 2, 60, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
                 // Draw support pole - proper connection fixed
                 ctx.fillStyle = '#8B4513';
                 const poleWidth = 6;
@@ -14351,7 +14669,30 @@ drawRainbowWing(scarecrow.x + 30, scarecrow.y + 13 + bodyBob, baseAngle + wingFl
 // Draw the scarecrow
 function drawScarecrow() {
     if (!scarecrow) return;
-    
+
+    // Don't draw if beamed up by UFO
+    if (scarecrow.beamedUp) return;
+
+    // Draw glow effect if glowing (returned by UFO)
+    if (scarecrow.glowing) {
+        if (!scarecrow.glowPhase) scarecrow.glowPhase = 0;
+        scarecrow.glowPhase += 0.02;
+        const glowIntensity = (Math.sin(scarecrow.glowPhase) + 1) / 2;
+
+        ctx.save();
+        const glowGradient = ctx.createRadialGradient(
+            scarecrow.x, scarecrow.y - 60, 0,
+            scarecrow.x, scarecrow.y - 60, 80
+        );
+        glowGradient.addColorStop(0, `rgba(100, 255, 100, ${0.4 * glowIntensity})`);
+        glowGradient.addColorStop(1, 'rgba(100, 255, 100, 0)');
+        ctx.fillStyle = glowGradient;
+        ctx.beginPath();
+        ctx.arc(scarecrow.x, scarecrow.y - 60, 80, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
     const armWave = Math.sin(scarecrow.armWave);
     const hatWobble = Math.sin(scarecrow.hatWobble) * 0.1;
     
@@ -14984,14 +15325,40 @@ function drawAnts() {
     
     // Draw each ant
     for (const ant of ants) {
+        // Check if giant ant should revert to normal size
+        if (ant.isGiant && ant.giantUntil && Date.now() >= ant.giantUntil) {
+            ant.isGiant = false;
+            ant.size = undefined; // Remove custom size
+            debugLog('Giant ant reverted to normal size but remains glowing');
+        }
+
+        // Determine ant scale
+        const antScale = ant.size ? ant.size / 4 : 1; // Normal size is ~4 units
+
         // Cute bouncy effect
-        const bounceOffset = Math.sin(ant.bounce) * 0.5;
-        
+        const bounceOffset = Math.sin(ant.bounce) * 0.5 * antScale;
+
         // Save context for rotation
         ctx.save();
         ctx.translate(ant.x, ant.y + bounceOffset);
         ctx.rotate(ant.angle);
-        
+        ctx.scale(antScale, antScale);
+
+        // Draw glow if glowing
+        if (ant.glowing) {
+            if (!ant.glowPhase) ant.glowPhase = 0;
+            ant.glowPhase += 0.02;
+            const glowIntensity = (Math.sin(ant.glowPhase) + 1) / 2;
+
+            const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
+            glowGradient.addColorStop(0, `rgba(100, 255, 100, ${0.5 * glowIntensity})`);
+            glowGradient.addColorStop(1, 'rgba(100, 255, 100, 0)');
+            ctx.fillStyle = glowGradient;
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
         // Draw food if carrying (underneath ant when drawn)
         if (ant.carryingFood) {
             ctx.fillStyle = mushroomMode ? getMushroomColor('#D2B48C') : '#D2B48C'; // Tan color for food
@@ -15000,8 +15367,12 @@ function drawAnts() {
             ctx.fill();
         }
 
-        // Cute ant body - lighter brown
-        ctx.fillStyle = mushroomMode ? getMushroomColor('#654321') : '#654321'; // Medium brown
+        // Cute ant body - lighter brown (or glowing green if glowing)
+        let antColor = '#654321'; // Medium brown
+        if (ant.glowing) {
+            antColor = '#90EE90'; // Light green for glowing ants
+        }
+        ctx.fillStyle = mushroomMode ? getMushroomColor(antColor) : antColor;
         
         // Draw rounded body segments
         // Head
@@ -17116,6 +17487,12 @@ drawBirdTrails();
     // Update and draw fireflies (night only)
     updateFireflies(deltaTime);
     drawFireflies();
+
+    // Update and draw UFO encounters
+    attemptUFOSpawn();
+    updateUFO(deltaTime);
+    updateBeamedEntities();
+    drawUFO();
 
 // Update and draw gameboy
 updateGameboy(deltaTime);
