@@ -1546,6 +1546,10 @@ let mushroomEffectSpeed = 0.03; // Control speed of mushroom mode effects
 
 // Regular mushroom clusters (non-magic) - grow near tree bases after rain
 let mushroomClusters = [];
+
+// Food caching system for squirrels and crows
+let foodCaches = []; // {x, y, type: 'nut'|'seed', ownerId, createdTime, expiresIn: 3 days}
+
 let playingTheHits = false; // Flag to disable random chirps during playthehits performance
 let foodMaxedOutTimer = 0; // Track how long food has been at max
 const FOOD_MAX_RAT_ATTRACTION_TIME = 30000; // 30 seconds of max food attracts rats
@@ -2418,6 +2422,67 @@ function createFlower(x, y) {
 
                 ctx.restore();
             });
+        }
+
+        // Food Caching System
+        function createFoodCache(x, y, type, ownerId) {
+            const cache = {
+                x: x,
+                y: y,
+                type: type, // 'nut' or 'seed'
+                ownerId: ownerId,
+                createdTime: Date.now(),
+                expiresAt: Date.now() + (3 * dayNightDuration), // 3 game days
+                retrieved: false
+            };
+            foodCaches.push(cache);
+            debugLog(`Food cache created at (${x}, ${y}) by ${ownerId}`);
+            return cache;
+        }
+
+        function updateFoodCaches(deltaTime) {
+            const now = Date.now();
+            // Remove expired caches
+            foodCaches = foodCaches.filter(cache => {
+                if (cache.retrieved) return false;
+                if (now > cache.expiresAt) {
+                    debugLog(`Food cache at (${cache.x}, ${cache.y}) expired`);
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        // Find nearest cache for an owner
+        function findNearestCache(x, y, ownerId) {
+            let nearest = null;
+            let nearestDist = Infinity;
+
+            for (const cache of foodCaches) {
+                if (cache.retrieved) continue;
+                if (cache.ownerId !== ownerId) continue;
+
+                const dist = distance(x, y, cache.x, cache.y);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearest = cache;
+                }
+            }
+
+            return nearest;
+        }
+
+        // Check if an entity (squirrel/crow) should cache food
+        function shouldCacheFood(entity, entityType) {
+            // Only cache if entity has recently collected food and is in a safe spot
+            if (entityType === 'squirrel') {
+                // Squirrels cache when they have a nut and are on the ground
+                return entity.nutCollected && entity.y >= canvas.height * GROUND_HEIGHT_RATIO - 20;
+            } else if (entityType === 'crow') {
+                // Crows cache when they have food and are on the ground
+                return entity.hasFood && entity.isOnGround;
+            }
+            return false;
         }
 
 
@@ -9725,6 +9790,29 @@ ctx.stroke();
                             });
                         }
 
+                        // Check for food caches to dig up
+                        if (Math.random() < 0.005) {
+                            // Find any nearby cache (not just own caches)
+                            for (const cache of foodCaches) {
+                                if (cache.retrieved) continue;
+                                const dist = distance(this.x, this.y, cache.x, cache.y);
+                                if (dist < 30) {
+                                    // Rat digs up the cache!
+                                    cache.retrieved = true;
+                                    debugLog(`Rat dug up food cache at (${cache.x}, ${cache.y})!`);
+
+                                    // Add the food back to the world
+                                    foodItems.push({
+                                        x: cache.x,
+                                        y: cache.y,
+                                        type: cache.type === 'nut' ? 'seed' : cache.type,
+                                        timer: 0
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+
                         // V26: Reduced nest raiding chance for better ecosystem balance
                         if (!this.nestTarget && Math.random() < 0.007) { // Reduced from 0.01
                             const nearestNest = this.nearestNest();
@@ -10117,6 +10205,24 @@ class Squirrel {
         
         switch (this.state) {
             case 'wandering':
+                // Check for cached food to retrieve
+                if (!this.nutCollected && Math.random() < 0.001) {
+                    const cache = findNearestCache(this.x, this.y, this.id);
+                    if (cache && distance(this.x, this.y, cache.x, cache.y) < 200) {
+                        // Move toward cache
+                        const dx = cache.x - this.x;
+                        if (Math.abs(dx) < 15) {
+                            // Close enough to retrieve
+                            this.nutCollected = true;
+                            cache.retrieved = true;
+                            debugLog(`Squirrel retrieved cached nut at (${cache.x}, ${cache.y})`);
+                        } else {
+                            // Move toward cache
+                            this.direction = dx > 0 ? 1 : -1;
+                        }
+                    }
+                }
+
                 // Check for trees to climb - reduced chance
                 if (!this.fleeing && Math.random() < 0.003) { // Reduced from 0.005
                     const nearestTree = this.nearestTree();
@@ -10127,11 +10233,11 @@ class Squirrel {
                         debugLog(`Squirrel climbing tree at (${nearestTree.x})`);
                     }
                 }
-                
+
                 // Move along ground
-                this.applyForce({ 
-                    x: this.direction * 0.02, 
-                    y: 0 
+                this.applyForce({
+                    x: this.direction * 0.02,
+                    y: 0
                 });
                 
                 // Random direction changes
@@ -10187,7 +10293,14 @@ class Squirrel {
                     this.nutCollected = true;
                     debugLog(`Squirrel found a nut!`);
                 }
-                
+
+                // Chance to cache the nut if squirrel has one
+                if (this.nutCollected && Math.random() < 0.002) {
+                    createFoodCache(this.x, this.y, 'nut', this.id);
+                    this.nutCollected = false; // Nut is now cached
+                    debugLog(`Squirrel cached nut at (${this.x}, ${this.y})`);
+                }
+
                 // Resume wandering after foraging
                 if (this.stateTimer > 5000) {
                     if (this.nutCollected && Math.random() < 0.7) {
@@ -16686,6 +16799,7 @@ if (mushroomMode) {
     drawMagicMushroom();
     updateMushroomClusters(deltaTime);
     drawMushroomClusters();
+    updateFoodCaches(deltaTime);
     drawFood(deltaTime);
     drawBirdPoops(deltaTime);
     drawWorms();
