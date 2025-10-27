@@ -4195,14 +4195,14 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                         const labelText = `${baseName} is ${entityAction}`;
                         const labelX = lockedAnimal.x;
 
-                        // For trees, position label at top of crown; for animals, position above them
+                        // Position label BELOW creature to avoid overlapping with bars
                         let labelY;
                         if (lockedAnimalType === 'tree') {
-                            // Position at top of tree's crown (account for trunk height and leaf radius)
-                            labelY = lockedAnimal.y - lockedAnimal.trunkHeight - lockedAnimal.leafRadius - 20;
+                            // Position below tree base (at ground level)
+                            labelY = lockedAnimal.y + 30;
                         } else {
-                            // For animals, position above them
-                            labelY = lockedAnimal.y - 45;
+                            // For animals, position below them
+                            labelY = lockedAnimal.y + 50;
                         }
 
                         ctx.font = 'bold 16px Arial';
@@ -4253,8 +4253,13 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                     const barWidth = 100;
                     const barHeight = 8;
                     const barX = lockedAnimal.x - barWidth / 2;
-                    // Position bars above the name label
-                    let barY = labelY - 20;
+                    // Position bars above the entity (independent of label position)
+                    let barY;
+                    if (lockedAnimalType === 'tree') {
+                        barY = lockedAnimal.y - lockedAnimal.trunkHeight - lockedAnimal.leafRadius - 40;
+                    } else {
+                        barY = lockedAnimal.y - 65;
+                    }
 
                     // Get entity stats
                     let health = 100;
