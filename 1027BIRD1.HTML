@@ -1552,6 +1552,7 @@ let foodCaches = []; // {x, y, type: 'nut'|'seed', ownerId, createdTime, expires
 
 // Firefly system - nighttime glowing insects
 let fireflies = []; // {x, y, vx, vy, glowPhase, glowIntensity, caught}
+let fireflyNightActive = false; // Whether fireflies should appear this night
 
 let playingTheHits = false; // Flag to disable random chirps during playthehits performance
 let foodMaxedOutTimer = 0; // Track how long food has been at max
@@ -2515,14 +2516,15 @@ function createFlower(x, y) {
             // Remove caught fireflies
             fireflies = fireflies.filter(f => !f.caught);
 
-            // Spawn fireflies at night if there are few
-            if (timeOfDay >= 1 && fireflies.length < 3 && Math.random() < 0.01) {
+            // Spawn fireflies at night if this is a firefly night and there are few
+            if (timeOfDay >= 1 && fireflyNightActive && fireflies.length < 3 && Math.random() < 0.01) {
                 spawnFireflies();
             }
 
-            // Remove all fireflies at dawn
+            // Remove all fireflies at dawn and reset flag
             if (timeOfDay < 1 && fireflies.length > 0) {
                 fireflies = [];
+                fireflyNightActive = false;
             }
 
             fireflies.forEach(firefly => {
@@ -3610,6 +3612,14 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
 
         addDiaryEntry(summaryText, 'normal');
     }
+
+    // Start of night - randomly determine if fireflies should appear (35% chance)
+    if (previousTimeOfDay < 1 && timeOfDay >= 1) {
+        fireflyNightActive = Math.random() < 0.35;
+        if (fireflyNightActive) {
+            debugLog('Fireflies will appear tonight');
+        }
+    }
     
     // Morning food and worm spawn (around 6-7 AM)
     if ((oldHour !== currentHour) && (currentHour === 6 || currentHour === 7)) {
@@ -3868,8 +3878,8 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
         function drawSky() {
             let skyColor;
 
-            // Add sunset variation
-            const sunsetType = Math.floor(simulationTime / dayNightDuration * 10) % 6;
+            // Expanded sunset variations - space them out over longer periods
+            const sunsetType = Math.floor(simulationTime / dayNightDuration * 5) % 20;
 
             if (timeOfDay < 1) {
                 // Day colors with sunset variations
@@ -3879,27 +3889,96 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                     const sunsetIntensity = Math.min(1, (timeOfDay - 0.6) * 3);
 
                     switch(sunsetType) {
-                        case 0:
+                        case 0: // Warm golden hour
                             skyColor = `hsl(${40 + timeOfDay * 5}, ${85 * sunsetIntensity}%, ${75 - timeOfDay * 15}%)`;
                             break;
-                        case 1:
+                        case 1: // Classic orange sunset
                             skyColor = `hsl(${25 + timeOfDay * 10}, ${95 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
                             break;
-                        case 2:
+                        case 2: // Soft pink sunset
                             skyColor = `hsl(${320 + timeOfDay * 10}, ${80 * sunsetIntensity}%, ${70 - timeOfDay * 25}%)`;
                             break;
-                        case 3:
+                        case 3: // Vibrant coral
                             skyColor = `hsl(${5 + timeOfDay * 5}, ${90 * sunsetIntensity}%, ${60 - timeOfDay * 30}%)`;
                             break;
-                        case 4:
+                        case 4: // Calming turquoise
                             skyColor = `hsl(${180 + timeOfDay * 8}, ${70 * sunsetIntensity}%, ${65 - timeOfDay * 20}%)`;
                             break;
-                        case 5:
+                        case 5: // Serene lavender
                             skyColor = `hsl(${240 + timeOfDay * 15}, ${80 * sunsetIntensity}%, ${65 - timeOfDay * 25}%)`;
+                            break;
+                        case 6: // Peachy apricot
+                            skyColor = `hsl(${30 + timeOfDay * 8}, ${92 * sunsetIntensity}%, ${72 - timeOfDay * 22}%)`;
+                            break;
+                        case 7: // Rose quartz
+                            skyColor = `hsl(${340 + timeOfDay * 12}, ${75 * sunsetIntensity}%, ${68 - timeOfDay * 23}%)`;
+                            break;
+                        case 8: // Gentle amber
+                            skyColor = `hsl(${45 + timeOfDay * 6}, ${88 * sunsetIntensity}%, ${73 - timeOfDay * 18}%)`;
+                            break;
+                        case 9: // Soft periwinkle
+                            skyColor = `hsl(${220 + timeOfDay * 10}, ${65 * sunsetIntensity}%, ${70 - timeOfDay * 20}%)`;
+                            break;
+                        case 10: // Warm salmon
+                            skyColor = `hsl(${15 + timeOfDay * 7}, ${85 * sunsetIntensity}%, ${67 - timeOfDay * 24}%)`;
+                            break;
+                        case 11: // Tranquil mint
+                            skyColor = `hsl(${165 + timeOfDay * 9}, ${68 * sunsetIntensity}%, ${69 - timeOfDay * 19}%)`;
+                            break;
+                        case 12: // Soft mauve
+                            skyColor = `hsl(${280 + timeOfDay * 14}, ${73 * sunsetIntensity}%, ${66 - timeOfDay * 21}%)`;
+                            break;
+                        case 13: // Golden peach
+                            skyColor = `hsl(${35 + timeOfDay * 9}, ${90 * sunsetIntensity}%, ${71 - timeOfDay * 20}%)`;
+                            break;
+                        case 14: // Dusty rose
+                            skyColor = `hsl(${350 + timeOfDay * 8}, ${78 * sunsetIntensity}%, ${69 - timeOfDay * 26}%)`;
+                            break;
+                        case 15: // Aqua breeze
+                            skyColor = `hsl(${190 + timeOfDay * 11}, ${72 * sunsetIntensity}%, ${68 - timeOfDay * 18}%)`;
+                            break;
+                        case 16: // Lilac dream
+                            skyColor = `hsl(${270 + timeOfDay * 13}, ${76 * sunsetIntensity}%, ${67 - timeOfDay * 22}%)`;
+                            break;
+                        case 17: // Honey glow
+                            skyColor = `hsl(${48 + timeOfDay * 7}, ${87 * sunsetIntensity}%, ${74 - timeOfDay * 19}%)`;
+                            break;
+                        case 18: // Blush pink
+                            skyColor = `hsl(${330 + timeOfDay * 10}, ${82 * sunsetIntensity}%, ${70 - timeOfDay * 24}%)`;
+                            break;
+                        case 19: // Soft cerulean
+                            skyColor = `hsl(${200 + timeOfDay * 12}, ${70 * sunsetIntensity}%, ${66 - timeOfDay * 21}%)`;
                             break;
                     }
                 } else {
-                    skyColor = `hsl(${200 + timeOfDay * 60}, 70%, ${70 - timeOfDay * 30}%)`;
+                    // Day sky variations based on sunsetType for more variety
+                    const dayType = sunsetType % 8;
+                    switch(dayType) {
+                        case 0: // Classic blue
+                            skyColor = `hsl(${200 + timeOfDay * 60}, 70%, ${70 - timeOfDay * 30}%)`;
+                            break;
+                        case 1: // Bright azure
+                            skyColor = `hsl(${205 + timeOfDay * 55}, 75%, ${72 - timeOfDay * 28}%)`;
+                            break;
+                        case 2: // Soft sky blue
+                            skyColor = `hsl(${195 + timeOfDay * 65}, 68%, ${73 - timeOfDay * 32}%)`;
+                            break;
+                        case 3: // Clear cerulean
+                            skyColor = `hsl(${210 + timeOfDay * 50}, 72%, ${71 - timeOfDay * 29}%)`;
+                            break;
+                        case 4: // Gentle cyan
+                            skyColor = `hsl(${190 + timeOfDay * 58}, 66%, ${74 - timeOfDay * 31}%)`;
+                            break;
+                        case 5: // Crisp blue
+                            skyColor = `hsl(${208 + timeOfDay * 52}, 74%, ${69 - timeOfDay * 27}%)`;
+                            break;
+                        case 6: // Serene sky
+                            skyColor = `hsl(${198 + timeOfDay * 62}, 69%, ${72 - timeOfDay * 30}%)`;
+                            break;
+                        case 7: // Pure blue
+                            skyColor = `hsl(${202 + timeOfDay * 56}, 71%, ${70 - timeOfDay * 28}%)`;
+                            break;
+                    }
                 }
             } else {
                 skyColor = `hsl(${260 - (timeOfDay - 1) * 60}, 70%, ${40 - (timeOfDay - 1) * 20}%)`;
